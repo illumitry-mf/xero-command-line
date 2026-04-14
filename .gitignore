@@ -20,5 +20,8 @@ Thumbs.db
 .env
 .env.*
 
+# Compiled binary
+xero
+
 # Xero CLI config (tokens, credentials)
 .config/

@@ -1,11 +1,13 @@
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest'
 import {mkdirSync, rmSync} from 'node:fs'
-import {randomBytes} from 'node:crypto'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 
-const TEST_DIR = join(tmpdir(), `xero-command-line-auth-test-${Date.now()}`)
-const TEST_KEY = randomBytes(32)
+const {TEST_DIR} = vi.hoisted(() => {
+  const {join} = require('node:path')
+  const {tmpdir} = require('node:os')
+  return {TEST_DIR: join(tmpdir(), `xero-command-line-auth-test-${Date.now()}`)}
+})
 
 vi.mock('node:os', async () => {
   const actual = await vi.importActual<typeof import('node:os')>('node:os')
@@ -15,18 +17,7 @@ vi.mock('node:os', async () => {
   }
 })
 
-vi.mock('../../src/lib/crypto.js', () => ({
-  getOrCreateKey: async () => TEST_KEY,
-  encrypt: (plaintext: string, key: Buffer) => {
-    // Simple reversible encoding for tests
-    return Buffer.from(plaintext).toString('base64')
-  },
-  decrypt: (encoded: string, _key: Buffer) => {
-    return Buffer.from(encoded, 'base64').toString('utf-8')
-  },
-}))
-
-const {getCachedTokenSet, cacheTokenSet, clearCachedToken} = await import('../../src/lib/auth.js')
+import {getCachedTokenSet, cacheTokenSet, clearCachedToken} from '../../src/lib/auth.js'
 
 describe('auth token cache', () => {
   beforeEach(() => {
@@ -90,6 +81,49 @@ describe('auth token cache', () => {
 
     it('does not error when clearing non-existent profile', () => {
       expect(() => clearCachedToken('nonexistent')).not.toThrow()
+    })
+  })
+
+  describe('env var override', () => {
+    afterEach(() => {
+      delete process.env.XERO_ACCESS_TOKEN
+      delete process.env.XERO_REFRESH_TOKEN
+      delete process.env.XERO_TENANT_ID
+      delete process.env.XERO_TENANT_NAME
+    })
+
+    it('returns env var tokens when all three are set', () => {
+      process.env.XERO_ACCESS_TOKEN = 'env-access'
+      process.env.XERO_REFRESH_TOKEN = 'env-refresh'
+      process.env.XERO_TENANT_ID = 'env-tenant'
+
+      const entry = getCachedTokenSet('any-profile')
+      expect(entry).not.toBeNull()
+      expect(entry?.accessToken).toBe('env-access')
+      expect(entry?.refreshToken).toBe('env-refresh')
+      expect(entry?.tenantId).toBe('env-tenant')
+      expect(entry?.expiresAt).toBe(Infinity)
+    })
+
+    it('includes tenant name from env var when set', () => {
+      process.env.XERO_ACCESS_TOKEN = 'env-access'
+      process.env.XERO_REFRESH_TOKEN = 'env-refresh'
+      process.env.XERO_TENANT_ID = 'env-tenant'
+      process.env.XERO_TENANT_NAME = 'My Org'
+
+      const entry = getCachedTokenSet('any-profile')
+      expect(entry?.tenantName).toBe('My Org')
+    })
+
+    it('falls back to file cache when env vars are incomplete', () => {
+      process.env.XERO_ACCESS_TOKEN = 'env-access-only'
+
+      cacheTokenSet('fallback-profile', {access_token: 'file-token', refresh_token: 'file-refresh', expires_in: 1800}, 'file-tenant')
+
+      const entry = getCachedTokenSet('fallback-profile')
+      expect(entry?.accessToken).toBe('file-token')
+      expect(entry?.refreshToken).toBe('file-refresh')
+      expect(entry?.tenantId).toBe('file-tenant')
     })
   })
 })

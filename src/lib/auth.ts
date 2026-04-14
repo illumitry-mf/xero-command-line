@@ -1,7 +1,6 @@
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs'
 import {homedir} from 'node:os'
 import {join} from 'node:path'
-import {encrypt, decrypt, getOrCreateKey} from './crypto.js'
 
 export interface TokenEntry {
   accessToken: string
@@ -11,16 +10,8 @@ export interface TokenEntry {
   tenantName?: string
 }
 
-interface EncryptedTokenEntry {
-  accessToken: string // encrypted
-  refreshToken: string // encrypted
-  expiresAt: number
-  tenantId: string
-  tenantName?: string
-}
-
 interface TokenCache {
-  [profileName: string]: EncryptedTokenEntry
+  [profileName: string]: TokenEntry
 }
 
 const CONFIG_DIR = join(homedir(), '.config', 'xero-command-line')
@@ -50,38 +41,38 @@ function writeTokenCache(cache: TokenCache): void {
   writeFileSync(TOKEN_PATH, JSON.stringify(cache, null, 2), {mode: 0o600})
 }
 
-export async function getCachedTokenSet(profileName: string): Promise<TokenEntry | null> {
+export function getCachedTokenSet(profileName: string): TokenEntry | null {
+  // Environment variables take full precedence over the file cache
+  const envAccessToken = process.env.XERO_ACCESS_TOKEN
+  const envRefreshToken = process.env.XERO_REFRESH_TOKEN
+  const envTenantId = process.env.XERO_TENANT_ID
+  if (envAccessToken && envRefreshToken && envTenantId) {
+    return {
+      accessToken: envAccessToken,
+      refreshToken: envRefreshToken,
+      expiresAt: Infinity,
+      tenantId: envTenantId,
+      tenantName: process.env.XERO_TENANT_NAME,
+    }
+  }
+
   const cache = readTokenCache()
   const entry = cache[profileName]
   if (!entry) return null
 
-  try {
-    const key = await getOrCreateKey()
-    return {
-      accessToken: decrypt(entry.accessToken, key),
-      refreshToken: decrypt(entry.refreshToken, key),
-      expiresAt: entry.expiresAt,
-      tenantId: entry.tenantId,
-      tenantName: entry.tenantName,
-    }
-  } catch {
-    // Decryption failed (key rotated, corrupted data) — clear entry
-    delete cache[profileName]
-    writeTokenCache(cache)
-    return null
-  }
+  return entry
 }
 
 export function isTokenExpired(entry: TokenEntry): boolean {
   return Date.now() >= entry.expiresAt - TOKEN_BUFFER_MS
 }
 
-export async function cacheTokenSet(
+export function cacheTokenSet(
   profileName: string,
   tokenSet: {access_token?: string; refresh_token?: string; expires_in?: number; expires_at?: number},
   tenantId: string,
   tenantName?: string,
-): Promise<void> {
+): void {
   const accessToken = tokenSet.access_token
   const refreshToken = tokenSet.refresh_token
   if (!accessToken || !refreshToken) return
@@ -97,11 +88,10 @@ export async function cacheTokenSet(
     expiresAt = Date.now() + 1800 * 1000
   }
 
-  const key = await getOrCreateKey()
   const cache = readTokenCache()
   cache[profileName] = {
-    accessToken: encrypt(accessToken, key),
-    refreshToken: encrypt(refreshToken, key),
+    accessToken,
+    refreshToken,
     expiresAt,
     tenantId,
     tenantName,

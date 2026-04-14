@@ -35,6 +35,7 @@
     "dev": "node --loader ts-node/esm bin/dev.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "build:binary": "npm run build && npx oclif manifest && bun build ./bin/run-binary.js --compile --target=bun-linux-arm64 --outfile xero",
     "postpack": "rm -f oclif.manifest.json",
     "prepack": "tsc -b && oclif manifest"
   },
@@ -105,7 +106,6 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7",
-    "@napi-rs/keyring": "^1.2.0",
     "@oclif/core": "^4",
     "@oclif/plugin-help": "^6",
     "@toon-format/toon": "^2.1.0",
