@@ -43,48 +43,37 @@ export function validateUploadFile(filePath: string): void {
   }
 }
 
-type ApiClient = XeroClient['accountingApi']
-
 // Resources that support includeOnline on upload
 const SUPPORTS_INCLUDE_ONLINE = new Set<AttachmentResource>(['invoice', 'creditNote'])
 
-function getUploadMethod(api: ApiClient, resource: AttachmentResource) {
-  const map: Record<AttachmentResource, (...args: any[]) => Promise<any>> = {
-    invoice:         (...a) => api.createInvoiceAttachmentByFileName(...a),
-    creditNote:      (...a) => api.createCreditNoteAttachmentByFileName(...a),
-    bankTransaction: (...a) => api.createBankTransactionAttachmentByFileName(...a),
-    quote:           (...a) => api.createQuoteAttachmentByFileName(...a),
-    contact:         (...a) => api.createContactAttachmentByFileName(...a),
-    account:         (...a) => api.createAccountAttachmentByFileName(...a),
-    manualJournal:   (...a) => api.createManualJournalAttachmentByFileName(...a),
-  }
-  return map[resource]
+const UPLOAD_METHOD: Record<AttachmentResource, string> = {
+  invoice:         'createInvoiceAttachmentByFileName',
+  creditNote:      'createCreditNoteAttachmentByFileName',
+  bankTransaction: 'createBankTransactionAttachmentByFileName',
+  quote:           'createQuoteAttachmentByFileName',
+  contact:         'createContactAttachmentByFileName',
+  account:         'createAccountAttachmentByFileName',
+  manualJournal:   'createManualJournalAttachmentByFileName',
 }
 
-function getListMethod(api: ApiClient, resource: AttachmentResource) {
-  const map: Record<AttachmentResource, (...args: any[]) => Promise<any>> = {
-    invoice:         (...a) => api.getInvoiceAttachments(...a),
-    creditNote:      (...a) => api.getCreditNoteAttachments(...a),
-    bankTransaction: (...a) => api.getBankTransactionAttachments(...a),
-    quote:           (...a) => api.getQuoteAttachments(...a),
-    contact:         (...a) => api.getContactAttachments(...a),
-    account:         (...a) => api.getAccountAttachments(...a),
-    manualJournal:   (...a) => api.getManualJournalAttachments(...a),
-  }
-  return map[resource]
+const LIST_METHOD: Record<AttachmentResource, string> = {
+  invoice:         'getInvoiceAttachments',
+  creditNote:      'getCreditNoteAttachments',
+  bankTransaction: 'getBankTransactionAttachments',
+  quote:           'getQuoteAttachments',
+  contact:         'getContactAttachments',
+  account:         'getAccountAttachments',
+  manualJournal:   'getManualJournalAttachments',
 }
 
-function getDownloadByIdMethod(api: ApiClient, resource: AttachmentResource) {
-  const map: Record<AttachmentResource, (...args: any[]) => Promise<any>> = {
-    invoice:         (...a) => api.getInvoiceAttachmentById(...a),
-    creditNote:      (...a) => api.getCreditNoteAttachmentById(...a),
-    bankTransaction: (...a) => api.getBankTransactionAttachmentById(...a),
-    quote:           (...a) => api.getQuoteAttachmentById(...a),
-    contact:         (...a) => api.getContactAttachmentById(...a),
-    account:         (...a) => api.getAccountAttachmentById(...a),
-    manualJournal:   (...a) => api.getManualJournalAttachmentById(...a),
-  }
-  return map[resource]
+const DOWNLOAD_METHOD: Record<AttachmentResource, string> = {
+  invoice:         'getInvoiceAttachmentById',
+  creditNote:      'getCreditNoteAttachmentById',
+  bankTransaction: 'getBankTransactionAttachmentById',
+  quote:           'getQuoteAttachmentById',
+  contact:         'getContactAttachmentById',
+  account:         'getAccountAttachmentById',
+  manualJournal:   'getManualJournalAttachmentById',
 }
 
 export async function uploadAttachment(
@@ -100,14 +89,13 @@ export async function uploadAttachment(
 
   const fileName = path.basename(filePath)
   const stream = fs.createReadStream(filePath)
-  const api = xero.accountingApi
-  const upload = getUploadMethod(api, resource)
+  const api = xero.accountingApi as unknown as Record<string, (...args: unknown[]) => Promise<any>>
 
   let response: any
   if (SUPPORTS_INCLUDE_ONLINE.has(resource)) {
-    response = await upload(tenantId, resourceId, fileName, stream, includeOnline, undefined)
+    response = await api[UPLOAD_METHOD[resource]](tenantId, resourceId, fileName, stream, includeOnline, undefined)
   } else {
-    response = await upload(tenantId, resourceId, fileName, stream, undefined)
+    response = await api[UPLOAD_METHOD[resource]](tenantId, resourceId, fileName, stream, undefined)
   }
 
   return response.body.attachments?.[0] as Attachment
@@ -119,8 +107,8 @@ export async function listAttachments(
   resource: AttachmentResource,
   resourceId: string,
 ): Promise<Attachment[]> {
-  const list = getListMethod(xero.accountingApi, resource)
-  const response = await list(tenantId, resourceId)
+  const api = xero.accountingApi as unknown as Record<string, (...args: unknown[]) => Promise<any>>
+  const response = await api[LIST_METHOD[resource]](tenantId, resourceId)
   return (response.body.attachments ?? []) as Attachment[]
 }
 
@@ -139,7 +127,7 @@ export async function downloadAttachment(
   const fileName = meta.fileName ?? 'attachment'
   const mimeType = meta.mimeType ?? 'application/octet-stream'
 
-  const getById = getDownloadByIdMethod(xero.accountingApi, resource)
-  const response = await getById(tenantId, resourceId, attachmentId, mimeType)
+  const api = xero.accountingApi as unknown as Record<string, (...args: unknown[]) => Promise<any>>
+  const response = await api[DOWNLOAD_METHOD[resource]](tenantId, resourceId, attachmentId, mimeType)
   return {fileName, data: response.body as Buffer}
 }
