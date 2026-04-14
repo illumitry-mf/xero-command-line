@@ -5,7 +5,7 @@
 
 ## Overview
 
-Add `attachments` sub-commands to all Xero resource topics that support file attachments via the Xero API. Each resource gets four commands: `upload`, `list`, `download`, `delete`.
+Add `attachments` sub-commands to all Xero resource topics that support file attachments via the Xero API. Each resource gets three commands: `upload`, `list`, `download`. Delete is not supported by the Xero Accounting API.
 
 ## Resources in Scope
 
@@ -27,7 +27,6 @@ Each resource follows this pattern (shown for `invoices`):
 xero invoices attachments upload   --invoice-id <ID> --file <path> [--include-online]
 xero invoices attachments list     --invoice-id <ID>
 xero invoices attachments download --invoice-id <ID> --attachment-id <ID> [--output <path>]
-xero invoices attachments delete   --invoice-id <ID> --attachment-id <ID>
 ```
 
 The ID flag name matches the resource (e.g. `--credit-note-id`, `--contact-id`, `--account-id`, etc.).
@@ -36,7 +35,7 @@ The ID flag name matches the resource (e.g. `--credit-note-id`, `--contact-id`, 
 
 - `--<resource>-id <ID>` — required
 - `--file <path>` — required, local filesystem path
-- `--include-online` — optional flag (invoices only), exposes attachment in Xero's online invoice view
+- `--include-online` — optional flag (invoices and credit-notes only), exposes attachment in Xero's online invoice/credit note view
 
 Filename stored in Xero = `path.basename(--file)`. No `--name` override.
 
@@ -62,13 +61,6 @@ Supports `--json` and `--csv` output flags inherited from `BaseCommand.baseFlags
 - `--output <path>` — optional, destination path. If omitted, saves to the current working directory using the attachment's original filename. If `--output` points to an existing directory, the file is saved inside it with the original filename. If `--output` is a full file path, it is used as-is.
 
 The lib resolves the original filename by calling `listAttachments` internally before downloading (one extra API call). Prints saved path on success.
-
-### delete
-
-- `--<resource>-id <ID>` — required
-- `--attachment-id <ID>` — required
-
-Prints confirmation on success. No output format flags.
 
 ## Architecture
 
@@ -107,26 +99,19 @@ function downloadAttachment(
   attachmentId: string,
 ): Promise<{ fileName: string; data: Buffer }>
 
-function deleteAttachment(
-  xero: XeroClient,
-  tenantId: string,
-  resource: AttachmentResource,
-  resourceId: string,
-  attachmentId: string,
-): Promise<void>
 ```
 
 Internally, a dispatch map routes each `AttachmentResource` to its corresponding `xero.accountingApi` SDK methods:
 
 ```ts
 const dispatch: Record<AttachmentResource, ResourceMethods> = {
-  invoice:         { upload: ..., list: ..., download: ..., delete: ... },
-  creditNote:      { upload: ..., list: ..., download: ..., delete: ... },
-  bankTransaction: { upload: ..., list: ..., download: ..., delete: ... },
-  quote:           { upload: ..., list: ..., download: ..., delete: ... },
-  contact:         { upload: ..., list: ..., download: ..., delete: ... },
-  account:         { upload: ..., list: ..., download: ..., delete: ... },
-  manualJournal:   { upload: ..., list: ..., download: ..., delete: ... },
+  invoice:         { upload: ..., list: ..., download: ... },
+  creditNote:      { upload: ..., list: ..., download: ... },
+  bankTransaction: { upload: ..., list: ..., download: ... },
+  quote:           { upload: ..., list: ..., download: ... },
+  contact:         { upload: ..., list: ..., download: ... },
+  account:         { upload: ..., list: ..., download: ... },
+  manualJournal:   { upload: ..., list: ..., download: ... },
 }
 ```
 
@@ -155,26 +140,45 @@ src/
     attachments.ts                          ← shared logic
   commands/
     invoices/attachments/
-      upload.ts / list.ts / download.ts / delete.ts
+      upload.ts / list.ts / download.ts
     credit-notes/attachments/
-      upload.ts / list.ts / download.ts / delete.ts
+      upload.ts / list.ts / download.ts
     bank-transactions/attachments/
-      upload.ts / list.ts / download.ts / delete.ts
+      upload.ts / list.ts / download.ts
     quotes/attachments/
-      upload.ts / list.ts / download.ts / delete.ts
+      upload.ts / list.ts / download.ts
     contacts/attachments/
-      upload.ts / list.ts / download.ts / delete.ts
+      upload.ts / list.ts / download.ts
     accounts/attachments/
-      upload.ts / list.ts / download.ts / delete.ts
+      upload.ts / list.ts / download.ts
     manual-journals/attachments/
-      upload.ts / list.ts / download.ts / delete.ts
+      upload.ts / list.ts / download.ts
 
 test/
   lib/
     attachments.test.ts
 ```
 
-Total: 1 lib file + 28 command files + 1 test file.
+Total: 1 lib file + 21 command files + 1 test file.
+
+## SDK Method Reference
+
+All methods are on `xero.accountingApi`. Confirmed from xero-node v13 type declarations.
+
+| Resource | Upload | List | Download by ID |
+|---|---|---|---|
+| invoice | `createInvoiceAttachmentByFileName(tenantId, invoiceID, fileName, stream, includeOnline?)` | `getInvoiceAttachments(tenantId, invoiceID)` | `getInvoiceAttachmentById(tenantId, invoiceID, attachmentID, contentType)` |
+| creditNote | `createCreditNoteAttachmentByFileName(tenantId, creditNoteID, fileName, stream, includeOnline?)` | `getCreditNoteAttachments(tenantId, creditNoteID)` | `getCreditNoteAttachmentById(tenantId, creditNoteID, attachmentID, contentType)` |
+| bankTransaction | `createBankTransactionAttachmentByFileName(tenantId, bankTransactionID, fileName, stream)` | `getBankTransactionAttachments(tenantId, bankTransactionID)` | `getBankTransactionAttachmentById(tenantId, bankTransactionID, attachmentID, contentType)` |
+| quote | `createQuoteAttachmentByFileName(tenantId, quoteID, fileName, stream)` | `getQuoteAttachments(tenantId, quoteID)` | `getQuoteAttachmentById(tenantId, quoteID, attachmentID, contentType)` |
+| contact | `createContactAttachmentByFileName(tenantId, contactID, fileName, stream)` | `getContactAttachments(tenantId, contactID)` | `getContactAttachmentById(tenantId, contactID, attachmentID, contentType)` |
+| account | `createAccountAttachmentByFileName(tenantId, accountID, fileName, stream)` | `getAccountAttachments(tenantId, accountID)` | `getAccountAttachmentById(tenantId, accountID, attachmentID, contentType)` |
+| manualJournal | `createManualJournalAttachmentByFileName(tenantId, manualJournalID, fileName, stream)` | `getManualJournalAttachments(tenantId, manualJournalID)` | `getManualJournalAttachmentById(tenantId, manualJournalID, attachmentID, contentType)` |
+
+- All `list` methods return `{body: Attachments}` where `Attachments` has an `attachments` array.
+- All `getById` methods return `{body: Buffer}`.
+- `includeOnline` is only available on `createInvoiceAttachmentByFileName` and `createCreditNoteAttachmentByFileName`.
+- `downloadAttachment` calls `listAttachments` first internally to resolve `fileName` and `mimeType` from the given `attachmentId`, then calls `getById` with that `mimeType` as `contentType`.
 
 ## Error Handling
 
@@ -199,4 +203,3 @@ Test cases:
 - `uploadAttachment`: calls correct SDK method per resource type with correct args
 - `listAttachments`: returns mapped attachment array
 - `downloadAttachment`: returns buffer + original filename
-- `deleteAttachment`: calls correct SDK delete method per resource type
