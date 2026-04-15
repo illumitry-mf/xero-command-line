@@ -42,14 +42,19 @@ function writeTokenCache(cache: TokenCache): void {
   writeFileSync(TOKEN_PATH, JSON.stringify(cache, null, 2), {mode: 0o600})
 }
 
+function resolveGsmConfig(): {projectId: string; secretName: string} {
+  const projectId = process.env.XERO_GCP_PROJECT
+  const secretName = process.env.XERO_GSM_SECRET_NAME
+  if (!projectId || !secretName) {
+    throw new Error('XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm')
+  }
+  return {projectId, secretName}
+}
+
 export async function getCachedTokenSet(profileName: string): Promise<TokenEntry | null> {
   // GSM backend
   if (process.env.XERO_TOKEN_STORE === 'gsm') {
-    const projectId = process.env.XERO_GCP_PROJECT
-    const secretName = process.env.XERO_GSM_SECRET_NAME
-    if (!projectId || !secretName) {
-      throw new Error('XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm')
-    }
+    const {projectId, secretName} = resolveGsmConfig()
     return getTokenFromGsm(secretName, projectId)
   }
 
@@ -109,13 +114,9 @@ export async function cacheTokenSet(
 
   const entry: TokenEntry = {accessToken, refreshToken, expiresAt, tenantId, tenantName}
 
-  // GSM backend
+  // In GSM mode the secret name comes from XERO_GSM_SECRET_NAME; profileName is not used.
   if (process.env.XERO_TOKEN_STORE === 'gsm') {
-    const projectId = process.env.XERO_GCP_PROJECT
-    const secretName = process.env.XERO_GSM_SECRET_NAME
-    if (!projectId || !secretName) {
-      throw new Error('XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm')
-    }
+    const {projectId, secretName} = resolveGsmConfig()
     await saveTokenToGsm(secretName, projectId, entry)
     return
   }
