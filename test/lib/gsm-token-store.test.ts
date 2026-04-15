@@ -51,6 +51,12 @@ describe('getTokenFromGsm', () => {
       'GSM auth failed — check GOOGLE_APPLICATION_CREDENTIALS',
     )
   })
+
+  it('returns null when payload data is missing', async () => {
+    mockAccessSecretVersion.mockResolvedValue([{payload: {data: null}}])
+    const result = await getTokenFromGsm('xero-tokens-acme', 'my-project')
+    expect(result).toBeNull()
+  })
 })
 
 describe('saveTokenToGsm', () => {
@@ -59,7 +65,7 @@ describe('saveTokenToGsm', () => {
   it('calls addSecretVersion with serialised TokenEntry payload', async () => {
     mockAddSecretVersion.mockResolvedValue([{}])
 
-    await saveTokenToGsm('xero-tokens-acme', 'my-project', ENTRY)
+    await expect(saveTokenToGsm('xero-tokens-acme', 'my-project', ENTRY)).resolves.toBeUndefined()
 
     expect(mockAddSecretVersion).toHaveBeenCalledWith({
       parent: 'projects/my-project/secrets/xero-tokens-acme',
