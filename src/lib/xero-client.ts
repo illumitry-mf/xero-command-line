@@ -11,7 +11,10 @@ export async function createXeroClient(
 ): Promise<{xero: XeroClient; tenantId: string}> {
   const cached = await getCachedTokenSet(profileName)
   if (!cached) {
-    throw new Error(`Not logged in. Run "xero login" to authenticate.`)
+    const gsmHint = process.env.XERO_TOKEN_STORE === 'gsm'
+      ? ' Set XERO_TOKEN_STORE=gsm and run "xero login" with GSM env vars to seed the secret.'
+      : ''
+    throw new Error(`Not logged in. Run "xero login" to authenticate.${gsmHint}`)
   }
 
   let accessToken = cached.accessToken
