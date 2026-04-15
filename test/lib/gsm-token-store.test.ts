@@ -2,11 +2,13 @@ import {describe, it, expect, vi, beforeEach} from 'vitest'
 
 const mockAccessSecretVersion = vi.fn()
 const mockAddSecretVersion = vi.fn()
+const mockCreateSecret = vi.fn()
 
 vi.mock('@google-cloud/secret-manager', () => ({
   SecretManagerServiceClient: vi.fn(() => ({
     accessSecretVersion: mockAccessSecretVersion,
     addSecretVersion: mockAddSecretVersion,
+    createSecret: mockCreateSecret,
   })),
 }))
 
@@ -85,8 +87,33 @@ describe('saveTokenToGsm', () => {
     })
   })
 
-  it('throws with GSM write message on failure', async () => {
+  it('creates the secret then writes when secret does not exist (gRPC code 5)', async () => {
+    const notFound = Object.assign(new Error('NOT_FOUND'), {code: 5})
+    mockAddSecretVersion.mockRejectedValueOnce(notFound).mockResolvedValueOnce([{}])
+    mockCreateSecret.mockResolvedValue([{}])
+
+    await expect(saveTokenToGsm('xero-tokens-acme', 'my-project', ENTRY)).resolves.toBeUndefined()
+
+    expect(mockCreateSecret).toHaveBeenCalledWith({
+      parent: 'projects/my-project',
+      secretId: 'xero-tokens-acme',
+      secret: {replication: {automatic: {}}},
+    })
+    expect(mockAddSecretVersion).toHaveBeenCalledTimes(2)
+  })
+
+  it('throws with GSM write message on non-NOT_FOUND failure', async () => {
     mockAddSecretVersion.mockRejectedValue(new Error('PERMISSION_DENIED'))
+
+    await expect(saveTokenToGsm('xero-tokens-acme', 'my-project', ENTRY)).rejects.toThrow(
+      'GSM write failed',
+    )
+  })
+
+  it('throws with GSM write message when createSecret fails', async () => {
+    const notFound = Object.assign(new Error('NOT_FOUND'), {code: 5})
+    mockAddSecretVersion.mockRejectedValueOnce(notFound)
+    mockCreateSecret.mockRejectedValue(new Error('PERMISSION_DENIED'))
 
     await expect(saveTokenToGsm('xero-tokens-acme', 'my-project', ENTRY)).rejects.toThrow(
       'GSM write failed',

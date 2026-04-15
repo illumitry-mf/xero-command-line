@@ -20,19 +20,29 @@ export async function getTokenFromGsm(secretName: string, projectId: string): Pr
 
 export async function saveTokenToGsm(secretName: string, projectId: string, entry: TokenEntry): Promise<void> {
   const client = new SecretManagerServiceClient()
-  const parent = `projects/${projectId}/secrets/${secretName}`
+  const projectPath = `projects/${projectId}`
+  const secretPath = `${projectPath}/secrets/${secretName}`
+  const payload = {data: Buffer.from(JSON.stringify(entry), 'utf-8')}
   try {
     // Each refresh creates a new secret version. GSM retains all versions until
     // explicitly destroyed. For low-traffic CLI use this is acceptable; operators
     // with high refresh rates should configure a Secret Manager retention policy
     // or implement destroySecretVersion after a successful write.
-    await client.addSecretVersion({
-      parent,
-      payload: {
-        data: Buffer.from(JSON.stringify(entry), 'utf-8'),
-      },
-    })
+    await client.addSecretVersion({parent: secretPath, payload})
   } catch (err: unknown) {
-    throw new Error(`GSM write failed: ${(err as Error).message}`)
+    const code = (err as {code?: number}).code
+    if (code !== 5) throw new Error(`GSM write failed: ${(err as Error).message}`)
+
+    // Secret does not exist yet — create it then add the first version.
+    try {
+      await client.createSecret({
+        parent: projectPath,
+        secretId: secretName,
+        secret: {replication: {automatic: {}}},
+      })
+      await client.addSecretVersion({parent: secretPath, payload})
+    } catch (createErr: unknown) {
+      throw new Error(`GSM write failed: ${(createErr as Error).message}`)
+    }
   }
 }
