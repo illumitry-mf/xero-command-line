@@ -42,11 +42,19 @@ function writeTokenCache(cache: TokenCache): void {
 }
 
 export function getCachedTokenSet(profileName: string): TokenEntry | null {
-  // Environment variables take full precedence over the file cache
   const envAccessToken = process.env.XERO_ACCESS_TOKEN
   const envRefreshToken = process.env.XERO_REFRESH_TOKEN
   const envTenantId = process.env.XERO_TENANT_ID
   if (envAccessToken && envRefreshToken && envTenantId) {
+    // After a token refresh, the new token lands in the file cache with a real
+    // expiry. Prefer it over the env var token if it's still valid — this
+    // allows the retry logic in withRetry to succeed after a 401-triggered refresh.
+    const cache = readTokenCache()
+    const fileEntry = cache[profileName]
+    if (fileEntry && !isTokenExpired(fileEntry)) {
+      return fileEntry
+    }
+
     return {
       accessToken: envAccessToken,
       refreshToken: envRefreshToken,
