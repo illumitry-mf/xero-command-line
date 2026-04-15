@@ -23,12 +23,11 @@ export async function saveTokenToGsm(secretName: string, projectId: string, entr
   const projectPath = `projects/${projectId}`
   const secretPath = `${projectPath}/secrets/${secretName}`
   const payload = {data: Buffer.from(JSON.stringify(entry), 'utf-8')}
+
+  let newVersionName: string | null | undefined
   try {
-    // Each refresh creates a new secret version. GSM retains all versions until
-    // explicitly destroyed. For low-traffic CLI use this is acceptable; operators
-    // with high refresh rates should configure a Secret Manager retention policy
-    // or implement destroySecretVersion after a successful write.
-    await client.addSecretVersion({parent: secretPath, payload})
+    const [version] = await client.addSecretVersion({parent: secretPath, payload})
+    newVersionName = version.name
   } catch (err: unknown) {
     const code = (err as {code?: number}).code
     if (code !== 5) throw new Error(`GSM write failed: ${(err as Error).message}`)
@@ -41,8 +40,23 @@ export async function saveTokenToGsm(secretName: string, projectId: string, entr
         secret: {replication: {automatic: {}}},
       })
       await client.addSecretVersion({parent: secretPath, payload})
+      return  // First version only — no previous versions to clean up.
     } catch (createErr: unknown) {
       throw new Error(`GSM write failed: ${(createErr as Error).message}`)
+    }
+  }
+
+  // Destroy all previously enabled versions to avoid accumulating stale secrets.
+  if (newVersionName) {
+    try {
+      const [versions] = await client.listSecretVersions({parent: secretPath, filter: 'state:ENABLED'})
+      for (const v of versions) {
+        if (v.name && v.name !== newVersionName) {
+          await client.destroySecretVersion({name: v.name})
+        }
+      }
+    } catch {
+      // Best-effort cleanup — don't fail the write if version cleanup fails.
     }
   }
 }
