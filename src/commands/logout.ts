@@ -28,6 +28,10 @@ export default class Logout extends BaseCommand {
     }
 
     await clearCachedToken(profileName)
-    this.log(`Logged out from profile "${profileName}". Run "xero login" to re-authenticate.`)
+    if (process.env.XERO_TOKEN_STORE === 'gsm') {
+      this.log(`GSM mode: tokens are managed via Secret Manager. No local state was cleared.`)
+    } else {
+      this.log(`Logged out from profile "${profileName}". Run "xero login" to re-authenticate.`)
+    }
   }
 }

@@ -57,6 +57,16 @@ describe('getTokenFromGsm', () => {
     const result = await getTokenFromGsm('xero-tokens-acme', 'my-project')
     expect(result).toBeNull()
   })
+
+  it('throws with corrupt payload message when secret contains invalid JSON', async () => {
+    mockAccessSecretVersion.mockResolvedValue([
+      {payload: {data: Buffer.from('not-valid-json', 'utf-8')}},
+    ])
+
+    await expect(getTokenFromGsm('xero-tokens-acme', 'my-project')).rejects.toThrow(
+      'GSM secret payload is not valid JSON',
+    )
+  })
 })
 
 describe('saveTokenToGsm', () => {
