@@ -24,7 +24,7 @@ export async function createXeroClient(
       await cacheTokenSet(profileName, newTokenSet, cached.tenantId, cached.tenantName)
       accessToken = newTokenSet.access_token
     } catch {
-      clearCachedToken(profileName)
+      await clearCachedToken(profileName)
       throw new Error(`Session expired. Run "xero login" to re-authenticate.`)
     }
   }
@@ -65,11 +65,11 @@ export async function withRetry<T>(
             await cacheTokenSet(profileName, newTokenSet, cached.tenantId, cached.tenantName)
             continue
           } catch {
-            clearCachedToken(profileName)
+            await clearCachedToken(profileName)
             throw new Error(`Session expired. Run "xero login" to re-authenticate.`)
           }
         }
-        clearCachedToken(profileName)
+        await clearCachedToken(profileName)
         continue
       }
 
