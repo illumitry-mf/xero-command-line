@@ -1,6 +1,7 @@
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs'
 import {homedir} from 'node:os'
 import {join} from 'node:path'
+import {getTokenFromGsm, saveTokenToGsm} from './gsm-token-store.js'
 
 export interface TokenEntry {
   accessToken: string
@@ -41,7 +42,18 @@ function writeTokenCache(cache: TokenCache): void {
   writeFileSync(TOKEN_PATH, JSON.stringify(cache, null, 2), {mode: 0o600})
 }
 
-export function getCachedTokenSet(profileName: string): TokenEntry | null {
+export async function getCachedTokenSet(profileName: string): Promise<TokenEntry | null> {
+  // GSM backend
+  if (process.env.XERO_TOKEN_STORE === 'gsm') {
+    const projectId = process.env.XERO_GCP_PROJECT
+    const secretName = process.env.XERO_GSM_SECRET_NAME
+    if (!projectId || !secretName) {
+      throw new Error('XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm')
+    }
+    return getTokenFromGsm(secretName, projectId)
+  }
+
+  // Env var tokens
   const envAccessToken = process.env.XERO_ACCESS_TOKEN
   const envRefreshToken = process.env.XERO_REFRESH_TOKEN
   const envTenantId = process.env.XERO_TENANT_ID
@@ -64,6 +76,7 @@ export function getCachedTokenSet(profileName: string): TokenEntry | null {
     }
   }
 
+  // File cache
   const cache = readTokenCache()
   const entry = cache[profileName]
   if (!entry) return null
@@ -75,39 +88,48 @@ export function isTokenExpired(entry: TokenEntry): boolean {
   return Date.now() >= entry.expiresAt - TOKEN_BUFFER_MS
 }
 
-export function cacheTokenSet(
+export async function cacheTokenSet(
   profileName: string,
   tokenSet: {access_token?: string; refresh_token?: string; expires_in?: number; expires_at?: number},
   tenantId: string,
   tenantName?: string,
-): void {
+): Promise<void> {
   const accessToken = tokenSet.access_token
   const refreshToken = tokenSet.refresh_token
   if (!accessToken || !refreshToken) return
 
   let expiresAt: number
   if (tokenSet.expires_at) {
-    // expires_at is in seconds since epoch
     expiresAt = tokenSet.expires_at * 1000
   } else if (tokenSet.expires_in) {
     expiresAt = Date.now() + tokenSet.expires_in * 1000
   } else {
-    // Default 30 min
     expiresAt = Date.now() + 1800 * 1000
   }
 
-  const cache = readTokenCache()
-  cache[profileName] = {
-    accessToken,
-    refreshToken,
-    expiresAt,
-    tenantId,
-    tenantName,
+  const entry: TokenEntry = {accessToken, refreshToken, expiresAt, tenantId, tenantName}
+
+  // GSM backend
+  if (process.env.XERO_TOKEN_STORE === 'gsm') {
+    const projectId = process.env.XERO_GCP_PROJECT
+    const secretName = process.env.XERO_GSM_SECRET_NAME
+    if (!projectId || !secretName) {
+      throw new Error('XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm')
+    }
+    return saveTokenToGsm(secretName, projectId, entry)
   }
+
+  // File cache
+  const cache = readTokenCache()
+  cache[profileName] = entry
   writeTokenCache(cache)
 }
 
-export function clearCachedToken(profileName: string): void {
+export async function clearCachedToken(profileName: string): Promise<void> {
+  // GSM mode: no-op on clear (don't delete the secret, just let the next
+  // login overwrite it via addSecretVersion)
+  if (process.env.XERO_TOKEN_STORE === 'gsm') return
+
   const cache = readTokenCache()
   delete cache[profileName]
   writeTokenCache(cache)

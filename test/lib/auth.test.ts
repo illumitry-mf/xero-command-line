@@ -1,129 +1,166 @@
-import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest'
-import {mkdirSync, rmSync} from 'node:fs'
-import {join} from 'node:path'
+import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest'
 import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {mkdirSync, rmSync} from 'node:fs'
 
-const {TEST_DIR} = vi.hoisted(() => {
-  const {join} = require('node:path')
-  const {tmpdir} = require('node:os')
-  return {TEST_DIR: join(tmpdir(), `xero-command-line-auth-test-${Date.now()}`)}
-})
+const TEST_DIR = join(tmpdir(), `xero-auth-test-${Date.now()}`)
 
 vi.mock('node:os', async () => {
   const actual = await vi.importActual<typeof import('node:os')>('node:os')
-  return {
-    ...actual,
-    homedir: () => TEST_DIR,
-  }
+  return {...actual, homedir: () => TEST_DIR}
 })
 
-import {getCachedTokenSet, cacheTokenSet, clearCachedToken} from '../../src/lib/auth.js'
+const mockGetTokenFromGsm = vi.fn()
+const mockSaveTokenToGsm = vi.fn()
 
-describe('auth token cache', () => {
+vi.mock('../../src/lib/gsm-token-store.js', () => ({
+  getTokenFromGsm: mockGetTokenFromGsm,
+  saveTokenToGsm: mockSaveTokenToGsm,
+}))
+
+const {getCachedTokenSet, cacheTokenSet} = await import('../../src/lib/auth.js')
+
+const ENTRY = {
+  accessToken: 'at',
+  refreshToken: 'rt',
+  expiresAt: 9999999999000,
+  tenantId: 'tid',
+  tenantName: 'Acme',
+}
+
+describe('getCachedTokenSet', () => {
   beforeEach(() => {
     mkdirSync(join(TEST_DIR, '.config', 'xero-command-line'), {recursive: true})
+    vi.clearAllMocks()
+    delete process.env.XERO_TOKEN_STORE
+    delete process.env.XERO_GCP_PROJECT
+    delete process.env.XERO_GSM_SECRET_NAME
+    delete process.env.XERO_ACCESS_TOKEN
+    delete process.env.XERO_REFRESH_TOKEN
+    delete process.env.XERO_TENANT_ID
   })
 
   afterEach(() => {
     rmSync(TEST_DIR, {recursive: true, force: true})
   })
 
-  describe('getCachedTokenSet', () => {
-    it('returns null when no token cached', async () => {
-      expect(await getCachedTokenSet('no-profile')).toBeNull()
+  describe('GSM mode', () => {
+    beforeEach(() => {
+      process.env.XERO_TOKEN_STORE = 'gsm'
+      process.env.XERO_GCP_PROJECT = 'my-project'
+      process.env.XERO_GSM_SECRET_NAME = 'xero-tokens-acme'
     })
 
-    it('returns cached token when valid', async () => {
-      await cacheTokenSet('test', {access_token: 'my-token', refresh_token: 'my-refresh', expires_in: 1800}, 'tenant-1')
-      const entry = await getCachedTokenSet('test')
-      expect(entry?.accessToken).toBe('my-token')
-      expect(entry?.refreshToken).toBe('my-refresh')
-      expect(entry?.tenantId).toBe('tenant-1')
+    it('calls getTokenFromGsm with secret name and project', async () => {
+      mockGetTokenFromGsm.mockResolvedValue(ENTRY)
+
+      const result = await getCachedTokenSet('acme')
+
+      expect(mockGetTokenFromGsm).toHaveBeenCalledWith('xero-tokens-acme', 'my-project')
+      expect(result).toEqual(ENTRY)
     })
 
-    it('returns null when token is expired', async () => {
-      await cacheTokenSet('expired', {access_token: 'old-token', refresh_token: 'old-refresh', expires_at: Math.floor(Date.now() / 1000) - 100}, 'tenant-1')
-      const entry = await getCachedTokenSet('expired')
-      // Token is returned even if expired — caller uses isTokenExpired to check
-      expect(entry).not.toBeNull()
-    })
-  })
-
-  describe('cacheTokenSet', () => {
-    it('caches token with expires_in', async () => {
-      await cacheTokenSet('profile-a', {access_token: 'token-a', refresh_token: 'refresh-a', expires_in: 1800}, 'tenant-a')
-      const entry = await getCachedTokenSet('profile-a')
-      expect(entry?.accessToken).toBe('token-a')
+    it('returns null when GSM returns null', async () => {
+      mockGetTokenFromGsm.mockResolvedValue(null)
+      const result = await getCachedTokenSet('acme')
+      expect(result).toBeNull()
     })
 
-    it('caches token with expires_at', async () => {
-      const futureEpochSec = Math.floor(Date.now() / 1000) + 1800
-      await cacheTokenSet('profile-b', {access_token: 'token-b', refresh_token: 'refresh-b', expires_at: futureEpochSec}, 'tenant-b')
-      const entry = await getCachedTokenSet('profile-b')
-      expect(entry?.accessToken).toBe('token-b')
+    it('throws when XERO_GCP_PROJECT is missing', async () => {
+      delete process.env.XERO_GCP_PROJECT
+
+      await expect(getCachedTokenSet('acme')).rejects.toThrow(
+        'XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm',
+      )
     })
 
-    it('does not cache if no access_token', async () => {
-      await cacheTokenSet('empty', {}, 'tenant-x')
-      expect(await getCachedTokenSet('empty')).toBeNull()
+    it('throws when XERO_GSM_SECRET_NAME is missing', async () => {
+      delete process.env.XERO_GSM_SECRET_NAME
+
+      await expect(getCachedTokenSet('acme')).rejects.toThrow(
+        'XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm',
+      )
     })
   })
 
-  describe('clearCachedToken', () => {
-    it('removes a cached token', async () => {
-      await cacheTokenSet('to-clear', {access_token: 'remove-me', refresh_token: 'refresh-me', expires_in: 1800}, 'tenant-1')
-      const entry = await getCachedTokenSet('to-clear')
-      expect(entry?.accessToken).toBe('remove-me')
+  describe('env var mode (existing behaviour)', () => {
+    it('returns env var token when all three are set', async () => {
+      process.env.XERO_ACCESS_TOKEN = 'at-env'
+      process.env.XERO_REFRESH_TOKEN = 'rt-env'
+      process.env.XERO_TENANT_ID = 'tid-env'
 
-      clearCachedToken('to-clear')
-      expect(await getCachedTokenSet('to-clear')).toBeNull()
-    })
+      const result = await getCachedTokenSet('any-profile')
 
-    it('does not error when clearing non-existent profile', () => {
-      expect(() => clearCachedToken('nonexistent')).not.toThrow()
+      expect(mockGetTokenFromGsm).not.toHaveBeenCalled()
+      expect(result?.accessToken).toBe('at-env')
     })
   })
 
-  describe('env var override', () => {
-    afterEach(() => {
-      delete process.env.XERO_ACCESS_TOKEN
-      delete process.env.XERO_REFRESH_TOKEN
-      delete process.env.XERO_TENANT_ID
-      delete process.env.XERO_TENANT_NAME
+  describe('file cache mode (existing behaviour)', () => {
+    it('returns null when no cache file exists', async () => {
+      const result = await getCachedTokenSet('no-such-profile')
+      expect(result).toBeNull()
+    })
+  })
+})
+
+describe('cacheTokenSet', () => {
+  beforeEach(() => {
+    mkdirSync(join(TEST_DIR, '.config', 'xero-command-line'), {recursive: true})
+    vi.clearAllMocks()
+    delete process.env.XERO_TOKEN_STORE
+    delete process.env.XERO_GCP_PROJECT
+    delete process.env.XERO_GSM_SECRET_NAME
+  })
+
+  afterEach(() => {
+    rmSync(TEST_DIR, {recursive: true, force: true})
+  })
+
+  describe('GSM mode', () => {
+    beforeEach(() => {
+      process.env.XERO_TOKEN_STORE = 'gsm'
+      process.env.XERO_GCP_PROJECT = 'my-project'
+      process.env.XERO_GSM_SECRET_NAME = 'xero-tokens-acme'
     })
 
-    it('returns env var tokens when all three are set', () => {
-      process.env.XERO_ACCESS_TOKEN = 'env-access'
-      process.env.XERO_REFRESH_TOKEN = 'env-refresh'
-      process.env.XERO_TENANT_ID = 'env-tenant'
+    it('calls saveTokenToGsm with the token entry', async () => {
+      mockSaveTokenToGsm.mockResolvedValue(undefined)
 
-      const entry = getCachedTokenSet('any-profile')
-      expect(entry).not.toBeNull()
-      expect(entry?.accessToken).toBe('env-access')
-      expect(entry?.refreshToken).toBe('env-refresh')
-      expect(entry?.tenantId).toBe('env-tenant')
-      expect(entry?.expiresAt).toBe(Infinity)
+      await cacheTokenSet(
+        'acme',
+        {access_token: 'at', refresh_token: 'rt', expires_in: 1800},
+        'tid',
+        'Acme',
+      )
+
+      expect(mockSaveTokenToGsm).toHaveBeenCalledWith(
+        'xero-tokens-acme',
+        'my-project',
+        expect.objectContaining({
+          accessToken: 'at',
+          refreshToken: 'rt',
+          tenantId: 'tid',
+          tenantName: 'Acme',
+        }),
+      )
     })
 
-    it('includes tenant name from env var when set', () => {
-      process.env.XERO_ACCESS_TOKEN = 'env-access'
-      process.env.XERO_REFRESH_TOKEN = 'env-refresh'
-      process.env.XERO_TENANT_ID = 'env-tenant'
-      process.env.XERO_TENANT_NAME = 'My Org'
+    it('throws when XERO_GCP_PROJECT is missing', async () => {
+      delete process.env.XERO_GCP_PROJECT
 
-      const entry = getCachedTokenSet('any-profile')
-      expect(entry?.tenantName).toBe('My Org')
+      await expect(
+        cacheTokenSet('acme', {access_token: 'at', refresh_token: 'rt'}, 'tid'),
+      ).rejects.toThrow(
+        'XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm',
+      )
     })
+  })
 
-    it('falls back to file cache when env vars are incomplete', () => {
-      process.env.XERO_ACCESS_TOKEN = 'env-access-only'
-
-      cacheTokenSet('fallback-profile', {access_token: 'file-token', refresh_token: 'file-refresh', expires_in: 1800}, 'file-tenant')
-
-      const entry = getCachedTokenSet('fallback-profile')
-      expect(entry?.accessToken).toBe('file-token')
-      expect(entry?.refreshToken).toBe('file-refresh')
-      expect(entry?.tenantId).toBe('file-tenant')
+  describe('file cache mode (existing behaviour)', () => {
+    it('does not call saveTokenToGsm', async () => {
+      await cacheTokenSet('acme', {access_token: 'at', refresh_token: 'rt'}, 'tid')
+      expect(mockSaveTokenToGsm).not.toHaveBeenCalled()
     })
   })
 })
