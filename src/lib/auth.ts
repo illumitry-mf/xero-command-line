@@ -116,7 +116,8 @@ export async function cacheTokenSet(
     if (!projectId || !secretName) {
       throw new Error('XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm')
     }
-    return saveTokenToGsm(secretName, projectId, entry)
+    await saveTokenToGsm(secretName, projectId, entry)
+    return
   }
 
   // File cache

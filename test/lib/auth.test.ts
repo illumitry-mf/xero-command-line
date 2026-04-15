@@ -18,7 +18,7 @@ vi.mock('../../src/lib/gsm-token-store.js', () => ({
   saveTokenToGsm: mockSaveTokenToGsm,
 }))
 
-const {getCachedTokenSet, cacheTokenSet} = await import('../../src/lib/auth.js')
+const {getCachedTokenSet, cacheTokenSet, clearCachedToken} = await import('../../src/lib/auth.js')
 
 const ENTRY = {
   accessToken: 'at',
@@ -155,6 +155,16 @@ describe('cacheTokenSet', () => {
         'XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm',
       )
     })
+
+    it('throws when XERO_GSM_SECRET_NAME is missing', async () => {
+      delete process.env.XERO_GSM_SECRET_NAME
+
+      await expect(
+        cacheTokenSet('acme', {access_token: 'at', refresh_token: 'rt'}, 'tid'),
+      ).rejects.toThrow(
+        'XERO_GCP_PROJECT and XERO_GSM_SECRET_NAME are required when XERO_TOKEN_STORE=gsm',
+      )
+    })
   })
 
   describe('file cache mode (existing behaviour)', () => {
@@ -162,5 +172,31 @@ describe('cacheTokenSet', () => {
       await cacheTokenSet('acme', {access_token: 'at', refresh_token: 'rt'}, 'tid')
       expect(mockSaveTokenToGsm).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('clearCachedToken', () => {
+  beforeEach(() => {
+    mkdirSync(join(TEST_DIR, '.config', 'xero-command-line'), {recursive: true})
+    vi.clearAllMocks()
+    delete process.env.XERO_TOKEN_STORE
+    delete process.env.XERO_GCP_PROJECT
+    delete process.env.XERO_GSM_SECRET_NAME
+  })
+
+  afterEach(() => {
+    rmSync(TEST_DIR, {recursive: true, force: true})
+  })
+
+  it('is a no-op in GSM mode', async () => {
+    process.env.XERO_TOKEN_STORE = 'gsm'
+    await expect(clearCachedToken('acme')).resolves.toBeUndefined()
+  })
+
+  it('removes profile from file cache in non-GSM mode', async () => {
+    await cacheTokenSet('acme', {access_token: 'at', refresh_token: 'rt'}, 'tid')
+    await clearCachedToken('acme')
+    const result = await getCachedTokenSet('acme')
+    expect(result).toBeNull()
   })
 })
